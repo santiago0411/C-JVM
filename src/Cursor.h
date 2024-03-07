@@ -14,6 +14,7 @@ typedef struct
 
 Cursor CursorCreate(const void* data, const size_t size, const bool littleEndian);
 bool CursorReadByte(Cursor* cursor, uint8_t* value);
+bool CursorReadSByte(Cursor* cursor, int8_t* value);
 bool CursorReadBytesAlloc(Cursor* cursor, uint8_t** buf, const size_t allocSize, const size_t count);
 bool CursorReadBytes(Cursor* cursor, uint8_t* buf, const size_t count);
 bool CursorReadUInt16(Cursor* cursor, uint16_t* value);

@@ -2,7 +2,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <memory.h>
 #include <string.h>
 
 #include "Cursor.h"
@@ -40,6 +39,26 @@ typedef enum
     OP_CODE_BI_PUSH        = 0x10,
     OP_CODE_SI_PUSH        = 0x11,
     OP_CODE_LDC            = 0x12,
+    OP_CODE_I_LOAD         = 0x15,
+    OP_CODE_I_LOAD_0       = 0x1A,
+    OP_CODE_I_LOAD_1       = 0x1B,
+    OP_CODE_I_LOAD_2       = 0x1C,
+    OP_CODE_I_LOAD_3       = 0x1D,
+    OP_CODE_I_STORE        = 0x36,
+    OP_CODE_I_STORE_0      = 0x3B,
+    OP_CODE_I_STORE_1      = 0x3C,
+    OP_CODE_I_STORE_2      = 0x3D,
+    OP_CODE_I_STORE_3      = 0x3E,
+    OP_CODE_I_ADD          = 0x60,
+    OP_CODE_I_INC          = 0x84,
+    OP_CODE_I_CMP_EQ       = 0x9F,
+    OP_CODE_I_CMP_NE       = 0xA0,
+    OP_CODE_I_CMP_LT       = 0xA1,
+    OP_CODE_I_CMP_GE       = 0xA2,
+    OP_CODE_I_CMP_GT       = 0xA3,
+    OP_CODE_I_CMP_LE       = 0xA4,
+    OP_CODE_GOTO           = 0xA7,
+    OP_CODE_I_RETURN       = 0xAC,
     OP_CODE_RETURN         = 0xB1,
     OP_CODE_GET_STATIC     = 0xB2,
     OP_CODE_INVOKE_VIRTUAL = 0xB6,
@@ -48,9 +67,12 @@ typedef enum
 
 typedef enum
 {
+    TYPE_VOID,
     TYPE_CLASS_TYPE,
     TYPE_STRING,
     TYPE_BYTE,
+    TYPE_CHAR,
+    TYPE_BOOL,
     TYPE_SHORT,
     TYPE_INT,
     TYPE_FLOAT,
@@ -61,6 +83,8 @@ typedef union
     const char* ClassType;
     const char* String;
     uint8_t Byte;
+    char Char;
+    bool Bool;
     int16_t Short;
     int32_t Int;
     float Float;
@@ -70,49 +94,79 @@ typedef struct
 {
     ArgumentType Type;
     ArgumentAs As;
-    uint16_t Frame;
 } Argument;
 
-#define STACK_SIZE 4096
-static Argument STACK[STACK_SIZE] = {0};
-static Argument* STACK_PTR = &STACK[0];
-static const Argument*const STACK_START = &STACK[0];
-#define STACK_END STACK_START + STACK_SIZE
-#define STACK_COUNT (STACK_PTR - STACK_START)
+// If a method has more than 10 you deserve the crash lol
+#define METHOD_MAX_PARAMS 10
 
-static uint16_t CURRENT_STACK_FRAME = 0;
+typedef struct
+{
+    uint8_t ParametersCount;
+    ArgumentType ParameterTypes[METHOD_MAX_PARAMS];
+    ArgumentType MethodReturnType;
+} Descriptor;
+
+typedef struct
+{
+    uint16_t StackSize;
+    Argument* Stack;
+    Argument* StackStart;
+
+    // (DOCS:) A single local variable can hold a value of type boolean, byte, char, short, int, float, reference, or returnAddress.
+    // A pair of local variables can hold a value of type long or double.
+    uint16_t LocalsSize;
+    uint32_t* Locals;
+} Frame;
+
+static Frame* CURRENT_FRAME = NULL;
+
+#define ALLOC_NEW_FRAME(ca) \
+    do { \
+        CURRENT_FRAME = malloc(sizeof(Frame)); \
+        assert(CURRENT_FRAME); \
+        CURRENT_FRAME->StackSize = (ca)->MaxStack; \
+        CURRENT_FRAME->Stack = calloc((ca)->MaxStack, sizeof(Argument)); \
+        assert(CURRENT_FRAME->Stack); \
+        CURRENT_FRAME->StackStart = CURRENT_FRAME->Stack; \
+        CURRENT_FRAME->LocalsSize = (ca)->MaxLocals; \
+        if (CURRENT_FRAME->LocalsSize > 0) { \
+            CURRENT_FRAME->Locals = calloc((ca)->MaxLocals, sizeof(uint32_t)); \
+            assert(CURRENT_FRAME->Locals); \
+        } \
+    } while(0)
+
+#define FREE_CURRENT_FRAME() \
+    do { \
+        assert(CURRENT_FRAME); \
+        free((void*)CURRENT_FRAME->Stack); \
+        free((void*)CURRENT_FRAME->Locals); \
+        CURRENT_FRAME = NULL; \
+    } while(0)
 
 #define STACK_PUSH_BACK(arg) \
     do { \
-        assert(STACK_PTR < STACK_END && "Stack overflow"); \
-        (*arg) = STACK_PTR++; \
-        (*arg)->Frame = CURRENT_STACK_FRAME; \
+        assert(CURRENT_FRAME && "CURRENT_FRAME WAS NULL"); \
+        assert(CURRENT_FRAME->Stack < CURRENT_FRAME->StackStart + CURRENT_FRAME->StackSize && "Stack overflow"); \
+        (*arg) = CURRENT_FRAME->Stack++; \
     } while(0)
 
 #define STACK_POP(arg) \
     do { \
-        assert(STACK_PTR > STACK_START && "Stack is empty"); \
-        (*arg) = --STACK_PTR; \
-        assert((*arg)->Frame == CURRENT_STACK_FRAME && "Tried to pop an argument that doesn't belong to the current frame"); \
+        assert(CURRENT_FRAME && "CURRENT_FRAME WAS NULL"); \
+        assert(CURRENT_FRAME->Stack > CURRENT_FRAME->StackStart && "Stack frame is empty"); \
+        (*arg) = --CURRENT_FRAME->Stack; \
     } while(0)
 
+#define STACK_COUNT (CURRENT_FRAME->Stack - CURRENT_FRAME->StackStart)
 
-static uint32_t GetCurrentFrameArgCount()
-{
-    uint32_t count = 0;
-    const Argument* tmp = STACK_PTR;
-    while (tmp->Frame == CURRENT_STACK_FRAME || tmp > STACK_START) {
-        count++;
-        tmp--;
-    }
-    return count;
-}
+static bool ExecuteCode(const ClassFile* cf, const CodeAttribute* ca);
 
 static bool CodeAttributeCreate(CodeAttribute* ca, Cursor* c)
 {
     ENSURE_READ(CursorReadUInt16(c, (uint16_t*)&ca->MaxStack));
     ENSURE_READ(CursorReadUInt16(c, (uint16_t*)&ca->MaxLocals));
     ENSURE_READ(CursorReadUInt32(c, (uint32_t*)&ca->CodeLength));
+    // This cursor points to ClassFile data so we don't need to copy it, we can just take the pointer to it
     ca->Code = &c->Data[c->ReadPosition];
     c->ReadPosition += ca->CodeLength;
 
@@ -142,6 +196,30 @@ static void CodeAttributeDestroy(const CodeAttribute* ca)
     free((void*)ca);
 }
 
+static CodeAttribute* CreateCodeAttributeFromMethod(const ClassFile* cf, const MethodInfo* method)
+{
+    const Constant* methodNameConst = &cf->ConstantPool[method->NameIndex - 1];
+    assert(methodNameConst->Type == CONST_UTF8);
+    const char* methodName = methodNameConst->As.Utf8;
+
+    const AttributeInfo* codeAttInfo = FindAttributeByName(cf, method->Attributes, method->AttributesCount, "Code");
+    if (!codeAttInfo) {
+        fprintf(stderr, "Failed to find attribute 'Code' inside method '%s'\n", methodName);
+        return NULL;
+    }
+
+    Cursor attCursor = CursorCreate(codeAttInfo->Data, codeAttInfo->Length, false);
+    CodeAttribute* codeAtt = calloc(1, sizeof(CodeAttribute));
+    assert(codeAtt);
+
+    if (!CodeAttributeCreate(codeAtt, &attCursor)) {
+        CodeAttributeDestroy(codeAtt);
+        return NULL;
+    }
+
+    return codeAtt;
+}
+
 static const char* GetNameOfClass(const ClassFile* cf, const uint16_t classIndex)
 {
     const Constant* class = &cf->ConstantPool[classIndex - 1];
@@ -158,6 +236,46 @@ static const char* GetNameOfMember(const ClassFile* cf, const uint16_t nameAndTy
     const Constant* memberName = &cf->ConstantPool[nameAndType->As.Class.NameIndex - 1];
     assert(memberName->Type == CONST_UTF8);
     return memberName->As.Utf8;
+}
+
+static ArgumentType GetTypeFromDescriptorChar(const char c)
+{
+    switch (c) {
+        case 'B':
+            return TYPE_BYTE;
+        case 'C':
+            return TYPE_CHAR;
+        case 'F':
+            return TYPE_FLOAT;
+        case 'I':
+            return TYPE_INT;
+        case 'S':
+            return TYPE_SHORT;
+        case 'Z':
+            return TYPE_BOOL;
+        case 'V':
+            return TYPE_VOID;
+        default:
+            fprintf(stderr, "Unsupported argument type %c\n", c);
+            assert(false);
+    }
+}
+
+static void ParseDescriptorStr(const char* descStr, Descriptor* desc)
+{
+    assert(*descStr == '(' && "Descriptor should start with '('");
+
+    // TODO: this doesn't support objects or arrays
+    while (*++descStr && *descStr != ')') {
+        desc->ParameterTypes[desc->ParametersCount] = GetTypeFromDescriptorChar(*descStr);
+        assert(desc->ParameterTypes[desc->ParametersCount] != TYPE_VOID && "Method parameter can't possibly be of type void!");
+        desc->ParametersCount++;
+        assert(desc->ParametersCount <= METHOD_MAX_PARAMS && "Refactor your garbage code!");
+    }
+
+    assert(descStr);
+    // At this point descriptor points to ')'
+    desc->MethodReturnType = GetTypeFromDescriptorChar(*++descStr);
 }
 
 static bool PushIntConst(const int32_t value)
@@ -231,6 +349,88 @@ static bool LDC(const ClassFile* cf, Cursor* c)
     }
 
     return true;
+}
+
+static bool LoadInt(const uint8_t index)
+{
+    Argument* arg;
+    STACK_PUSH_BACK(&arg);
+    arg->Type = TYPE_INT;
+    arg->As.Int = (int32_t)CURRENT_FRAME->Locals[index];
+    return true;
+}
+
+static bool IntStore(const uint8_t index)
+{
+    Argument* arg;
+    STACK_POP(&arg);
+    assert(arg->Type == TYPE_INT);
+    CURRENT_FRAME->Locals[index] = (uint32_t)arg->As.Int;
+    return true;
+}
+
+static bool IntAdd()
+{
+    Argument *val1, *val2;
+    STACK_POP(&val2);
+    STACK_POP(&val1);
+
+    assert(val1->Type == TYPE_INT);
+    assert(val2->Type == TYPE_INT);
+
+    Argument* result;
+    STACK_PUSH_BACK(&result);
+
+    result->Type = TYPE_INT;
+    result->As.Int = val1->As.Int + val2->As.Int;
+
+    return true;
+}
+
+static bool IntInc(Cursor* c)
+{
+    uint8_t index;
+    ENSURE_READ(CursorReadByte(c, &index));
+
+    int8_t increase;
+    ENSURE_READ(CursorReadSByte(c, &increase));
+
+    CURRENT_FRAME->Locals[index] += (int32_t)increase;
+
+    return true;
+}
+
+static bool IntCompare(Cursor* c, const OpCode comparison)
+{
+    uint16_t branchOffset;
+    ENSURE_READ(CursorReadUInt16(c, &branchOffset));
+
+    // -3 because this whole opcode should be rewinded.
+    // That means, rewinding 2 bytes for the offset and 1 byte for the actual opcode
+    // (DOCS:) Execution then proceeds at that offset from the address of the opcode of this if_icmp<cond>
+    branchOffset -= 3;
+
+    Argument *val1, *val2;
+    STACK_POP(&val2);
+    STACK_POP(&val1);
+
+    assert(val1->Type == TYPE_INT);
+    assert(val2->Type == TYPE_INT);
+
+    switch (comparison) {
+        case OP_CODE_I_CMP_GE:
+        {
+            if (val1->As.Int >= val2->As.Int) {
+                c->ReadPosition += branchOffset;
+            }
+            return true;
+        }
+        default:
+        {
+            fprintf(stderr, "IntCompare - Invalid int comparison OpCode %x (%d)", comparison, comparison);
+            return false;
+        }
+    }
 }
 
 static bool GetStatic(const ClassFile* cf, Cursor* c)
@@ -348,7 +548,6 @@ static bool InvokeStatic(const ClassFile* cf, Cursor* c)
     assert(nameAndType->Type == CONST_NAME_AND_TYPE);
     const char* methodName = cf->ConstantPool[nameAndType->As.NameAndType.NameIndex - 1].As.Utf8;
 
-
     const MethodInfo* method = FindMethodByName(cf, methodName);
     if (!method) {
         fprintf(stderr, "Method %s.%s not found.\n", className, methodName);
@@ -357,43 +556,91 @@ static bool InvokeStatic(const ClassFile* cf, Cursor* c)
 
     assert((method->AccessFlags & MAF_STATIC) > 0 && "Expected static method!");
 
-    const char* descriptor = cf->ConstantPool[nameAndType->As.NameAndType.DescriptorIndex - 1].As.Utf8;
-    uint32_t currentFrameArgCount = GetCurrentFrameArgCount();
+    const char* descriptorStr = cf->ConstantPool[nameAndType->As.NameAndType.DescriptorIndex - 1].As.Utf8;
+    Descriptor descriptor = {0};
+    ParseDescriptorStr(descriptorStr, &descriptor);
 
-    if (!ExecuteMethod(cf, method)) {
-        fprintf(stderr, "InvokeStatic for %s.%s failed!\n", className, methodName);
+    assert(STACK_COUNT >= descriptor.ParametersCount);
+#if defined(APP_DEBUG)
+    for (uint8_t i = 0; i < descriptor.ParametersCount; i++) {
+        const Argument* arg = &CURRENT_FRAME->Stack[-i - 1];
+        assert(arg->Type == descriptor.ParameterTypes[i]);
+    }
+#endif
+
+    const CodeAttribute* codeAttribute = CreateCodeAttributeFromMethod(cf, method);
+    if (!codeAttribute) {
         return false;
     }
 
-    return true;
+    Frame* previousFrame = CURRENT_FRAME;
+    ALLOC_NEW_FRAME(codeAttribute);
+
+    // Pop arguments from the previous frame's stack and copy them to the new frame's locals
+    for (uint8_t i = 0; i < descriptor.ParametersCount; i++) {
+        const Argument* arg = --previousFrame->Stack;
+        uint32_t* local = &CURRENT_FRAME->Locals[i];
+
+        switch (arg->Type) {
+            case TYPE_CLASS_TYPE:
+            {
+                assert(false && "COPYING CLASS_TYPE ARG NYI!");
+                // break;
+            }
+            case TYPE_STRING:
+            {
+                assert(false && "COPY NATIVE STRINGS NYI!");
+                // break;
+            }
+            case TYPE_BYTE:
+            {
+                *(uint8_t*)local = arg->As.Byte;
+                break;
+            }
+            case TYPE_SHORT:
+            {
+                *(uint16_t*)local = (uint16_t)arg->As.Short;
+                break;
+            }
+            case TYPE_INT:
+            {
+                *local = (uint32_t)arg->As.Int;
+                break;
+            }
+            case TYPE_FLOAT:
+            {
+                *(float*)local = arg->As.Float;
+                break;
+            }
+            default:
+            {
+                assert(false && "Invalid Type");
+            }
+        }
+    }
+
+    bool result = true;
+    if (!ExecuteCode(cf, codeAttribute)) {
+        fprintf(stderr, "InvokeStatic for %s.%s failed!\n", className, methodName);
+        result = false;
+    }
+
+    if (result && descriptor.MethodReturnType != TYPE_VOID) {
+        Argument* arg;
+        STACK_POP(&arg);
+        assert(arg->Type == descriptor.MethodReturnType);
+        *previousFrame->Stack++ = *arg;
+    }
+
+    FREE_CURRENT_FRAME();
+    CURRENT_FRAME = previousFrame;
+    return result;
 }
 
-bool ExecuteMethod(const ClassFile* cf, const MethodInfo* method)
+static bool ExecuteCode(const ClassFile* cf, const CodeAttribute* ca)
 {
-    const Constant* methodNameConst = &cf->ConstantPool[method->NameIndex - 1];
-    assert(methodNameConst->Type == CONST_UTF8);
-    const char* methodName = methodNameConst->As.Utf8;
-
-    const AttributeInfo* codeAttribute = FindAttributeByName(cf, method->Attributes, method->AttributesCount, "Code");
-    if (!codeAttribute) {
-
-        fprintf(stderr, "Failed to find attribute 'Code' inside method '%s'\n", methodName);
-        return false;
-    }
-
-    Cursor attCursor = CursorCreate(codeAttribute->Data, codeAttribute->Length, false);
-    CodeAttribute* ca = calloc(1, sizeof(CodeAttribute));
-    assert(ca);
-
-    if (!CodeAttributeCreate(ca, &attCursor)) {
-        CodeAttributeDestroy(ca);
-        return false;
-    }
-
-    CURRENT_STACK_FRAME++;
     Cursor codeCursor = CursorCreate(ca->Code, ca->CodeLength, false);
     bool result = false;
-    const void* stackPtrBeforeMethod = STACK_PTR;
 
     while (codeCursor.ReadPosition < codeCursor.Size) {
         OpCode opCode = 0;
@@ -428,6 +675,69 @@ bool ExecuteMethod(const ClassFile* cf, const MethodInfo* method)
                 result = LDC(cf, &codeCursor);
                 break;
             }
+            case OP_CODE_I_LOAD:
+            {
+                uint8_t index;
+                ENSURE_READ(CursorReadByte(&codeCursor, &index));
+                result = LoadInt(index);
+                break;
+            }
+            case OP_CODE_I_LOAD_0:
+            case OP_CODE_I_LOAD_1:
+            case OP_CODE_I_LOAD_2:
+            case OP_CODE_I_LOAD_3:
+            {
+                result = LoadInt((int)opCode - 26);
+                break;
+            }
+            case OP_CODE_I_STORE:
+            {
+                uint8_t index;
+                ENSURE_READ(CursorReadByte(&codeCursor, &index));
+                result = IntStore(index);
+                break;
+            }
+            case OP_CODE_I_STORE_0:
+            case OP_CODE_I_STORE_1:
+            case OP_CODE_I_STORE_2:
+            case OP_CODE_I_STORE_3:
+            {
+                result = IntStore((int)opCode - 59);
+                break;
+            }
+            case OP_CODE_I_ADD:
+            {
+                result = IntAdd();
+                break;
+            }
+            case OP_CODE_I_INC:
+            {
+                result = IntInc(&codeCursor);
+                break;
+            }
+            case OP_CODE_I_CMP_GE:
+            {
+                result = IntCompare(&codeCursor, opCode);
+                break;
+            }
+            case OP_CODE_GOTO:
+            {
+                int16_t branchOffSet; // May be negative
+                ENSURE_READ(CursorReadInt16(&codeCursor, &branchOffSet));
+
+                // -3 because this whole opcode should be rewinded.
+                // That means, rewinding 2 bytes for the offset and 1 byte for the actual opcode
+                // (DOCS:) Execution proceeds at that offset from the address of the opcode of this goto instruction.
+                codeCursor.ReadPosition += (branchOffSet - 3);
+                result = true;
+                break;
+            }
+            case OP_CODE_I_RETURN:
+            {
+                assert(CURRENT_FRAME->Stack->Type == TYPE_INT);
+                result = true;
+                break;
+            }
             case OP_CODE_RETURN:
             {
                 result = true;
@@ -451,23 +761,32 @@ bool ExecuteMethod(const ClassFile* cf, const MethodInfo* method)
             default:
             {
                 fprintf(stderr, "Unsupported OpCode 0x%02x (%d)\n", opCode, opCode);
-                result = false;
-                break;
+                assert(false);
             }
         }
 
         if (!result) {
-            fprintf(stderr, "Execution for method '%s' failed!\n", methodName);
             break;
         }
     }
 
-    if (result) {
-        // Only assert if the execution of the method was successful
-        assert(stackPtrBeforeMethod == STACK_PTR && "Popping stack frame but it still has elements!");
+    return result;
+}
+
+bool ExecuteMethod(const ClassFile* cf, const MethodInfo* method)
+{
+    const CodeAttribute* ca = CreateCodeAttributeFromMethod(cf, method);
+    if (!ca) {
+        return false;
     }
 
-    CURRENT_STACK_FRAME--;
+    ALLOC_NEW_FRAME(ca);
+    const bool result = ExecuteCode(cf, ca);
+    if (!result) {
+        fprintf(stderr, "Execution for method '%s' failed!\n", cf->ConstantPool[method->NameIndex - 1].As.Utf8);
+    }
+    FREE_CURRENT_FRAME();
+
     CodeAttributeDestroy(ca);
     return result;
 }

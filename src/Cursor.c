@@ -28,6 +28,11 @@ bool CursorReadByte(Cursor* cursor, uint8_t* value)
     return true;
 }
 
+bool CursorReadSByte(Cursor* cursor, int8_t* value)
+{
+    return CursorReadByte(cursor, (uint8_t*)value);
+}
+
 bool CursorReadBytesAlloc(Cursor* cursor, uint8_t** buf, const size_t allocSize, const size_t count)
 {
     assert(allocSize >= count);

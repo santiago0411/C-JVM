@@ -25,7 +25,7 @@ int Run(const char* filePath, const char* methodName)
 
 #if defined(APP_DEBUG)
     printf("Magic: %x\n", classFile->Magic);
-    printf("Version: %d.%d\n", classFile->Major, classFile->Minor);
+    printf("Version: %d.%d\n\n", classFile->Major, classFile->Minor);
 #endif
 
     const MethodInfo* methodToRun = FindMethodByName(classFile, methodName);
