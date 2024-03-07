@@ -4,7 +4,23 @@ Basic implementation of a JVM in C because I like it better than Rust (just don'
 
 Reads a .class file and executes its instructions.
 
-> Only supports printing to the console strings, bytes, shorts, integers or floats
+Currently it supports:
+ ```c++
+public class HelloWorld {
+    public static void main(String[] args) {
+        System.out.println("Hello World!");
+        System.out.println(multiply(5, 4));
+    }
+
+    private static int multiply(int n1, int n2) {
+        int sum = 0;
+        for (int i = 0; i < n2; i++) {
+            sum += n1;
+        }
+        return sum;
+    }
+}
+```
 
 Oracle JVM specifications:
 - [Class File Format](https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html)
