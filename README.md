@@ -5,7 +5,7 @@ Basic implementation of a JVM in C because I like it better than Rust (just don'
 Reads a .class file and executes its instructions.
 
 Currently it supports:
- ```c++
+ ```java
 public class HelloWorld {
     public static void main(String[] args) {
         System.out.println("Hello World!");
