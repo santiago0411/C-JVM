@@ -29,13 +29,13 @@ typedef struct
 
 typedef enum
 {
-    OP_CODE_CONST_M1       = 0x02,
-    OP_CODE_CONST_0        = 0x03,
-    OP_CODE_CONST_1        = 0x04,
-    OP_CODE_CONST_2        = 0x05,
-    OP_CODE_CONST_3        = 0x06,
-    OP_CODE_CONST_4        = 0x07,
-    OP_CODE_CONST_5        = 0x08,
+    OP_CODE_I_CONST_M1     = 0x02,
+    OP_CODE_I_CONST_0      = 0x03,
+    OP_CODE_I_CONST_1      = 0x04,
+    OP_CODE_I_CONST_2      = 0x05,
+    OP_CODE_I_CONST_3      = 0x06,
+    OP_CODE_I_CONST_4      = 0x07,
+    OP_CODE_I_CONST_5      = 0x08,
     OP_CODE_BI_PUSH        = 0x10,
     OP_CODE_SI_PUSH        = 0x11,
     OP_CODE_LDC            = 0x12,
@@ -369,7 +369,7 @@ static bool IntStore(const uint8_t index)
     return true;
 }
 
-static bool IntAdd()
+static bool IntAdd(void)
 {
     Argument *val1, *val2;
     STACK_POP(&val2);
@@ -649,13 +649,13 @@ static bool ExecuteCode(const ClassFile* cf, const CodeAttribute* ca)
             break;
         }
         switch (opCode) {
-            case OP_CODE_CONST_M1:
-            case OP_CODE_CONST_0:
-            case OP_CODE_CONST_1:
-            case OP_CODE_CONST_2:
-            case OP_CODE_CONST_3:
-            case OP_CODE_CONST_4:
-            case OP_CODE_CONST_5:
+            case OP_CODE_I_CONST_M1:
+            case OP_CODE_I_CONST_0:
+            case OP_CODE_I_CONST_1:
+            case OP_CODE_I_CONST_2:
+            case OP_CODE_I_CONST_3:
+            case OP_CODE_I_CONST_4:
+            case OP_CODE_I_CONST_5:
             {
                 result = PushIntConst((int)opCode - 3);
                 break;
